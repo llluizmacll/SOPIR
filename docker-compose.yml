@@ -1,0 +1,95 @@
+# ─────────────────────────────────────────────────────────────
+# SOPIR — Security Operations & Incident Response Platform
+#
+#   docker compose up -d --build
+#   → frontend:  http://localhost:8080
+#   → API:       http://localhost:8080/api/v1  (proxy via nginx)
+#   → API direto: http://localhost:3000/api/v1
+#
+# Com connectors configurados (WAZUH_INDEXER_URL, FORTISIEM_URL, etc.),
+# a plataforma coleta eventos reais. Para desenvolvimento sem connectors,
+# defina SOPIR_SIMULATE=true ou deixe como auto.
+# ─────────────────────────────────────────────────────────────
+
+services:
+  sopir-db:
+    image: postgres:16-alpine
+    container_name: sopir-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sopir
+      POSTGRES_PASSWORD: sopir
+      POSTGRES_DB: sopir
+    volumes:
+      - sopir-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sopir -d sopir"]
+      interval: 5s
+      timeout: 4s
+      retries: 12
+    networks:
+      - sopir
+
+  sopir-api:
+    build: ./backend
+    container_name: sopir-api
+    restart: unless-stopped
+    depends_on:
+      sopir-db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DATABASE_URL: postgres://sopir:sopir@sopir-db:5432/sopir
+      # ── Wazuh (Wazuh Indexer — recomendado) ──
+      WAZUH_INDEXER_URL: ${WAZUH_INDEXER_URL:-}
+      WAZUH_INDEXER_USER: ${WAZUH_INDEXER_USER:-admin}
+      WAZUH_INDEXER_PASS: ${WAZUH_INDEXER_PASS:-}
+      WAZUH_INDEX_PATTERN: ${WAZUH_INDEX_PATTERN:-wazuh-alerts-4.x-*}
+      # ── Wazuh Manager API (alternativo, 4.8+) ──
+      WAZUH_MANAGER_URL: ${WAZUH_MANAGER_URL:-}
+      WAZUH_API_USER: ${WAZUH_API_USER:-}
+      WAZUH_API_PASS: ${WAZUH_API_PASS:-}
+      WAZUH_TENANT: ${WAZUH_TENANT:-}
+      WAZUH_POLL_SECONDS: ${WAZUH_POLL_SECONDS:-20}
+      # ── FortiSIEM ──
+      FORTISIEM_URL: ${FORTISIEM_URL:-}
+      FORTISIEM_USER: ${FORTISIEM_USER:-}
+      FORTISIEM_PASS: ${FORTISIEM_PASS:-}
+      FORTISIEM_ORG: ${FORTISIEM_ORG:-}
+      FORTISIEM_TENANT: ${FORTISIEM_TENANT:-}
+      FORTISIEM_POLL_SECONDS: ${FORTISIEM_POLL_SECONDS:-30}
+      # ── comportamento ──
+      SOPIR_INGEST_KEY: ${SOPIR_INGEST_KEY:-troque-esta-chave}
+      SOPIR_SIMULATE: ${SOPIR_SIMULATE:-false}
+      SOPIR_AUTO_ALERT: ${SOPIR_AUTO_ALERT:-true}
+      # ── identidade (JWT, MFA, SSO, recuperação) ──
+      JWT_SECRET: ${JWT_SECRET:-troque-esta-chave-secreta-em-producao}
+      JWT_TTL: ${JWT_TTL:-12h}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8080}
+      # true = token de recuperação retorna na resposta (apenas dev/demo)
+      SOPIR_RESET_DEV: ${SOPIR_RESET_DEV:-true}
+    networks:
+      - sopir
+
+  sopir-web:
+    build:
+      context: .
+      args:
+        VITE_API_BASE: /api/v1
+    container_name: sopir-web
+    restart: unless-stopped
+    depends_on:
+      - sopir-api
+    ports:
+      - "8080:80"
+    networks:
+      - sopir
+
+networks:
+  sopir:
+    driver: bridge
+
+volumes:
+  sopir-pg:
